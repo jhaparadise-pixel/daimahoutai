@@ -1,0 +1,473 @@
+<!doctype html>
+<html lang="zh-CN" class="h-full">
+ <head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>渗入器数据后台</title>
+  <script src="/_sdk/data_sdk.js"></script>
+  <script src="/_sdk/element_sdk.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body {
+      box-sizing: border-box;
+    }
+    
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+    
+    .pulse-animation {
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    .modal-backdrop {
+      background-color: rgba(0, 0, 0, 0.5);
+    }
+  </style>
+  <style>@view-transition { navigation: auto; }</style>
+ </head>
+ <body class="h-full">
+  <div id="app" class="w-full h-full"></div>
+  <script>
+    const defaultConfig = {
+      background_color: '#0f172a',
+      surface_color: '#1e293b',
+      text_color: '#f1f5f9',
+      primary_action_color: '#3b82f6',
+      secondary_action_color: '#10b981',
+      font_family: 'system-ui',
+      font_size: 16,
+      page_title: '渗入器数据后台',
+      total_label: '总数据量',
+      active_label: '已命中'
+    };
+
+    let dataRecords = [];
+    let showModal = false;
+    let isSubmitting = false;
+    let deleteConfirmId = null;
+
+    function calculateStats() {
+      const total = 463788 + dataRecords.length;
+      const active = dataRecords.filter(r => r.status === 'active').length;
+      
+      const agentStats = {
+        totalAgents: dataRecords.filter(r => r.tron_address).length,
+        totalQuota: dataRecords.reduce((sum, r) => sum + (r.quota || 0), 0)
+      };
+      
+      const today = new Date().toDateString();
+      const todayCount = dataRecords.filter(r => {
+        return new Date(r.created_at).toDateString() === today;
+      }).length;
+      
+      return { total, active, agentStats, todayCount };
+    }
+
+    function renderUI() {
+      const config = window.elementSdk ? window.elementSdk.config : defaultConfig;
+      const customFont = config.font_family || defaultConfig.font_family;
+      const baseSize = config.font_size || defaultConfig.font_size;
+      const baseFontStack = 'sans-serif';
+
+      const stats = calculateStats();
+
+      const app = document.getElementById('app');
+      app.style.backgroundColor = config.background_color || defaultConfig.background_color;
+      app.style.fontFamily = `${customFont}, ${baseFontStack}`;
+      app.style.color = config.text_color || defaultConfig.text_color;
+
+      app.innerHTML = `
+        <div class="w-full h-full overflow-auto">
+          <div class="max-w-7xl mx-auto p-8">
+            <header class="mb-12">
+              <h1 class="font-bold mb-3" style="font-size: ${baseSize * 2.5}px; font-family: ${customFont}, ${baseFontStack}; color: ${config.text_color || defaultConfig.text_color};">
+                ${config.page_title || defaultConfig.page_title}
+              </h1>
+              <p style="font-size: ${baseSize}px; font-family: ${customFont}, ${baseFontStack}; color: ${config.text_color || defaultConfig.text_color}; opacity: 0.6;">
+                系统数据概览与统计分析
+              </p>
+            </header>
+
+            <!-- 核心统计 -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+              <div class="rounded-xl p-8 shadow-lg" style="background-color: ${config.surface_color || defaultConfig.surface_color};">
+                <div style="font-size: ${baseSize * 0.9}px; opacity: 0.7; margin-bottom: 12px; font-weight: 500;">
+                  ${config.total_label || defaultConfig.total_label}
+                </div>
+                <div style="font-size: ${baseSize * 3}px; font-weight: bold; color: ${config.primary_action_color || defaultConfig.primary_action_color};">
+                  ${stats.total}
+                </div>
+              </div>
+              
+              <div class="rounded-xl p-8 shadow-lg" style="background-color: ${config.surface_color || defaultConfig.surface_color};">
+                <div style="font-size: ${baseSize * 0.9}px; opacity: 0.7; margin-bottom: 12px; font-weight: 500;">
+                  ${config.active_label || defaultConfig.active_label}
+                </div>
+                <div style="font-size: ${baseSize * 3}px; font-weight: bold; color: ${config.secondary_action_color || defaultConfig.secondary_action_color};">
+                  ${stats.active}
+                </div>
+              </div>
+            </div>
+
+            <!-- 代理绑定数据库 -->
+            <div class="rounded-xl p-8 shadow-lg mb-8" style="background-color: ${config.surface_color || defaultConfig.surface_color};">
+              <div class="flex items-center justify-between mb-6">
+                <h2 class="font-bold" style="font-size: ${baseSize * 1.5}px; color: ${config.text_color || defaultConfig.text_color};">
+                  代理绑定数据库
+                </h2>
+                <button id="addAgentBtn" class="px-6 py-3 rounded-lg font-semibold transition-all" style="background-color: ${config.primary_action_color || defaultConfig.primary_action_color}; color: white; font-size: ${baseSize * 0.9}px;">
+                  ➕ 添加代理
+                </button>
+              </div>
+
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                <div class="p-4 rounded-lg" style="background-color: rgba(255,255,255,0.03);">
+                  <div style="font-size: ${baseSize * 0.85}px; opacity: 0.6; margin-bottom: 4px;">代理总数</div>
+                  <div style="font-size: ${baseSize * 1.8}px; font-weight: bold; color: ${config.primary_action_color || defaultConfig.primary_action_color};">
+                    ${stats.agentStats.totalAgents}
+                  </div>
+                </div>
+                <div class="p-4 rounded-lg" style="background-color: rgba(255,255,255,0.03);">
+                  <div style="font-size: ${baseSize * 0.85}px; opacity: 0.6; margin-bottom: 4px;">总额度</div>
+                  <div style="font-size: ${baseSize * 1.8}px; font-weight: bold; color: ${config.secondary_action_color || defaultConfig.secondary_action_color};">
+                    ${stats.agentStats.totalQuota.toLocaleString()} USDT
+                  </div>
+                </div>
+              </div>
+
+              ${stats.agentStats.totalAgents > 0 ? `
+                <div class="overflow-x-auto">
+                  <table class="w-full" style="font-size: ${baseSize * 0.9}px;">
+                    <thead>
+                      <tr style="border-bottom: 1px solid rgba(255,255,255,0.1);">
+                        <th class="text-left py-3 px-2" style="opacity: 0.7;">Tron地址</th>
+                        <th class="text-left py-3 px-2" style="opacity: 0.7;">代理号</th>
+                        <th class="text-right py-3 px-2" style="opacity: 0.7;">额度(USDT)</th>
+                        <th class="text-center py-3 px-2" style="opacity: 0.7;">操作</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      ${dataRecords.filter(r => r.tron_address).map(record => `
+                        <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+                          <td class="py-3 px-2" style="font-family: monospace; font-size: ${baseSize * 0.8}px;">
+                            ${record.tron_address.substring(0, 8)}...${record.tron_address.substring(record.tron_address.length - 6)}
+                          </td>
+                          <td class="py-3 px-2">${record.agent_number || '-'}</td>
+                          <td class="py-3 px-2 text-right font-bold" style="color: ${config.secondary_action_color || defaultConfig.secondary_action_color};">
+                            ${(record.quota || 0).toLocaleString()}
+                          </td>
+                          <td class="py-3 px-2 text-center">
+                            ${deleteConfirmId === record.__backendId ? `
+                              <button class="confirm-delete-btn px-3 py-1 rounded text-white mr-1" data-id="${record.__backendId}" style="background-color: #10b981; font-size: ${baseSize * 0.8}px;">
+                                确认结算
+                              </button>
+                              <button class="cancel-delete-btn px-3 py-1 rounded" data-id="${record.__backendId}" style="background-color: rgba(255,255,255,0.1); font-size: ${baseSize * 0.8}px;">
+                                取消
+                              </button>
+                            ` : `
+                              <button class="delete-btn px-3 py-1 rounded transition-all" data-id="${record.__backendId}" style="background-color: rgba(16, 185, 129, 0.2); color: #10b981; font-size: ${baseSize * 0.8}px;">
+                                💰 结算
+                              </button>
+                            `}
+                          </td>
+                        </tr>
+                      `).join('')}
+                    </tbody>
+                  </table>
+                </div>
+              ` : `
+                <div class="text-center py-12" style="opacity: 0.5; font-size: ${baseSize}px;">
+                  暂无代理数据，点击上方按钮添加
+                </div>
+              `}
+            </div>
+
+            <!-- 今日数据 -->
+            <div class="rounded-xl p-8 shadow-lg" style="background-color: ${config.surface_color || defaultConfig.surface_color};">
+              <h2 class="font-bold mb-6" style="font-size: ${baseSize * 1.5}px; color: ${config.text_color || defaultConfig.text_color};">
+                今日数据
+              </h2>
+              <div class="flex items-center justify-between">
+                <div>
+                  <div style="font-size: ${baseSize * 0.9}px; opacity: 0.7; margin-bottom: 8px;">
+                    今日新增数量
+                  </div>
+                  <div style="font-size: ${baseSize * 2.5}px; font-weight: bold; color: ${config.secondary_action_color || defaultConfig.secondary_action_color};">
+                    ${stats.todayCount}
+                  </div>
+                </div>
+                <div class="text-right">
+                  <div style="font-size: ${baseSize * 0.9}px; opacity: 0.7; margin-bottom: 8px;">
+                    当前���间
+                  </div>
+                  <div style="font-size: ${baseSize}px; opacity: 0.8;">
+                    ${new Date().toLocaleString('zh-CN')}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            ${stats.total === 0 ? `
+              <div class="mt-8 text-center p-12 rounded-xl" style="background-color: ${config.surface_color || defaultConfig.surface_color}; opacity: 0.6;">
+                <div class="pulse-animation" style="font-size: ${baseSize * 1.2}px;">
+                  📊 系统就绪，等待数据接入...
+                </div>
+              </div>
+            ` : ''}
+          </div>
+        </div>
+
+        <!-- 添加代理模态框 -->
+        ${showModal ? `
+          <div class="modal-backdrop fixed inset-0 flex items-center justify-center" style="z-index: 1000;">
+            <div class="rounded-xl p-8 shadow-2xl max-w-md w-full mx-4" style="background-color: ${config.surface_color || defaultConfig.surface_color};">
+              <h3 class="font-bold mb-6" style="font-size: ${baseSize * 1.5}px; color: ${config.text_color || defaultConfig.text_color};">
+                添加新代理
+              </h3>
+              <form id="agentForm">
+                <div class="mb-4">
+                  <label for="tronAddress" class="block mb-2" style="font-size: ${baseSize * 0.9}px; opacity: 0.8;">Tron地址</label>
+                  <input type="text" id="tronAddress" required placeholder="T开头的Tron地址" class="w-full px-4 py-3 rounded-lg" style="background-color: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: ${config.text_color || defaultConfig.text_color}; font-size: ${baseSize}px;">
+                </div>
+                <div class="mb-4">
+                  <label for="agentNumber" class="block mb-2" style="font-size: ${baseSize * 0.9}px; opacity: 0.8;">代理号</label>
+                  <input type="text" id="agentNumber" required placeholder="代理编号" class="w-full px-4 py-3 rounded-lg" style="background-color: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: ${config.text_color || defaultConfig.text_color}; font-size: ${baseSize}px;">
+                </div>
+                <div class="mb-6">
+                  <label for="quota" class="block mb-2" style="font-size: ${baseSize * 0.9}px; opacity: 0.8;">额度(USDT) - 最低2000</label>
+                  <input type="number" id="quota" required min="2000" placeholder="2000" class="w-full px-4 py-3 rounded-lg" style="background-color: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: ${config.text_color || defaultConfig.text_color}; font-size: ${baseSize}px;">
+                </div>
+                <div id="errorMessage" class="mb-4 text-center" style="color: #ef4444; font-size: ${baseSize * 0.9}px; display: none;"></div>
+                <div class="flex gap-3">
+                  <button type="submit" id="submitBtn" ${isSubmitting ? 'disabled' : ''} class="flex-1 px-6 py-3 rounded-lg font-semibold transition-all" style="background-color: ${config.primary_action_color || defaultConfig.primary_action_color}; color: white; font-size: ${baseSize}px; opacity: ${isSubmitting ? '0.5' : '1'};">
+                    ${isSubmitting ? '添加中...' : '✅ 确认添加'}
+                  </button>
+                  <button type="button" id="cancelBtn" ${isSubmitting ? 'disabled' : ''} class="flex-1 px-6 py-3 rounded-lg font-semibold transition-all" style="background-color: rgba(255,255,255,0.1); color: ${config.text_color || defaultConfig.text_color}; font-size: ${baseSize}px;">
+                    ❌ 取消
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        ` : ''}
+      `;
+
+      attachEventListeners();
+    }
+
+    function attachEventListeners() {
+      const addBtn = document.getElementById('addAgentBtn');
+      if (addBtn) {
+        addBtn.addEventListener('click', () => {
+          if (dataRecords.length >= 999) {
+            showError('已达到最大数据量限制(999条)');
+            return;
+          }
+          showModal = true;
+          renderUI();
+        });
+      }
+
+      const cancelBtn = document.getElementById('cancelBtn');
+      if (cancelBtn) {
+        cancelBtn.addEventListener('click', () => {
+          showModal = false;
+          renderUI();
+        });
+      }
+
+      const form = document.getElementById('agentForm');
+      if (form) {
+        form.addEventListener('submit', handleSubmit);
+      }
+
+      document.querySelectorAll('.delete-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          const id = e.target.closest('.delete-btn').dataset.id;
+          deleteConfirmId = id;
+          renderUI();
+        });
+      });
+
+      document.querySelectorAll('.confirm-delete-btn').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+          const id = e.target.closest('.confirm-delete-btn').dataset.id;
+          await handleDelete(id);
+        });
+      });
+
+      document.querySelectorAll('.cancel-delete-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          deleteConfirmId = null;
+          renderUI();
+        });
+      });
+    }
+
+    async function handleSubmit(e) {
+      e.preventDefault();
+      
+      if (isSubmitting) return;
+
+      const tronAddress = document.getElementById('tronAddress').value.trim();
+      const agentNumber = document.getElementById('agentNumber').value.trim();
+      const quota = parseInt(document.getElementById('quota').value);
+
+      if (!tronAddress.startsWith('T') || tronAddress.length < 30) {
+        showError('请输入有效的Tron地址（T开头）');
+        return;
+      }
+
+      if (quota < 2000) {
+        showError('额度不能低于2000 USDT');
+        return;
+      }
+
+      if (dataRecords.length >= 999) {
+        showError('已达到最大数据量限制(999条)');
+        return;
+      }
+
+      isSubmitting = true;
+      renderUI();
+
+      const newAgent = {
+        id: Date.now().toString(),
+        tron_address: tronAddress,
+        agent_number: agentNumber,
+        quota: quota,
+        status: 'active',
+        type: 'agent',
+        created_at: new Date().toISOString()
+      };
+
+      const result = await window.dataSdk.create(newAgent);
+      
+      isSubmitting = false;
+
+      if (result.isOk) {
+        showModal = false;
+        renderUI();
+      } else {
+        showError('添加失败，请重试');
+        renderUI();
+      }
+    }
+
+    async function handleDelete(backendId) {
+      const record = dataRecords.find(r => r.__backendId === backendId);
+      if (!record) return;
+
+      const result = await window.dataSdk.delete(record);
+      
+      if (result.isOk) {
+        deleteConfirmId = null;
+      } else {
+        showError('删除失败，请重试');
+      }
+    }
+
+    function showError(message) {
+      const errorDiv = document.getElementById('errorMessage');
+      if (errorDiv) {
+        errorDiv.textContent = message;
+        errorDiv.style.display = 'block';
+        setTimeout(() => {
+          if (errorDiv) errorDiv.style.display = 'none';
+        }, 3000);
+      }
+    }
+
+    async function onConfigChange(config) {
+      renderUI();
+    }
+
+    const dataHandler = {
+      onDataChanged(data) {
+        dataRecords = data;
+        renderUI();
+      }
+    };
+
+    async function init() {
+      const dataResult = await window.dataSdk.init(dataHandler);
+      if (!dataResult.isOk) {
+        console.error('Failed to initialize data SDK');
+        return;
+      }
+
+      if (window.elementSdk) {
+        window.elementSdk.init({
+          defaultConfig,
+          onConfigChange,
+          mapToCapabilities: (config) => ({
+            recolorables: [
+              {
+                get: () => config.background_color || defaultConfig.background_color,
+                set: (value) => {
+                  config.background_color = value;
+                  window.elementSdk.setConfig({ background_color: value });
+                }
+              },
+              {
+                get: () => config.surface_color || defaultConfig.surface_color,
+                set: (value) => {
+                  config.surface_color = value;
+                  window.elementSdk.setConfig({ surface_color: value });
+                }
+              },
+              {
+                get: () => config.text_color || defaultConfig.text_color,
+                set: (value) => {
+                  config.text_color = value;
+                  window.elementSdk.setConfig({ text_color: value });
+                }
+              },
+              {
+                get: () => config.primary_action_color || defaultConfig.primary_action_color,
+                set: (value) => {
+                  config.primary_action_color = value;
+                  window.elementSdk.setConfig({ primary_action_color: value });
+                }
+              },
+              {
+                get: () => config.secondary_action_color || defaultConfig.secondary_action_color,
+                set: (value) => {
+                  config.secondary_action_color = value;
+                  window.elementSdk.setConfig({ secondary_action_color: value });
+                }
+              }
+            ],
+            borderables: [],
+            fontEditable: {
+              get: () => config.font_family || defaultConfig.font_family,
+              set: (value) => {
+                config.font_family = value;
+                window.elementSdk.setConfig({ font_family: value });
+              }
+            },
+            fontSizeable: {
+              get: () => config.font_size || defaultConfig.font_size,
+              set: (value) => {
+                config.font_size = value;
+                window.elementSdk.setConfig({ font_size: value });
+              }
+            }
+          }),
+          mapToEditPanelValues: (config) => new Map([
+            ['page_title', config.page_title || defaultConfig.page_title],
+            ['total_label', config.total_label || defaultConfig.total_label],
+            ['active_label', config.active_label || defaultConfig.active_label]
+          ])
+        });
+      }
+
+      renderUI();
+    }
+
+    init();
+  </script>
+ <script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'9b37df54d2a67974',t:'MTc2NjY2MDgyMS4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
+</html>
